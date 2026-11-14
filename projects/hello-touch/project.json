@@ -1,0 +1,6 @@
+{
+  "description": "Starter template: prints the name, then shows swipe/tap. Copy it with `flash.py new`",
+  "libraries": [
+    "GFX Library for Arduino"
+  ]
+}

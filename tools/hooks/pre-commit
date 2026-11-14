@@ -1,0 +1,19 @@
+#!/bin/sh
+# Blocks commits that would leak credentials. Enabled by `python tools/flash.py setup`
+# (git config core.hooksPath tools/hooks), or manually with that same git command.
+
+if git diff --cached --name-only | grep -E '(^|/)secrets\.h$' >/dev/null; then
+  echo "pre-commit: refusing to commit a secrets.h file (it holds your Wi-Fi password and token)." >&2
+  echo "            Unstage it with: git restore --staged <path>" >&2
+  exit 1
+fi
+
+# Catch real credentials pasted into any other file. Matches are never printed.
+if git diff --cached -U0 | grep -E '^\+.*(WIFI_PASSWORD|USAGE_TOKEN)[ "=:]+[^ ]' \
+   | grep -vE 'YOUR_WIFI_PASSWORD|__GENERATE__|define (WIFI_PASSWORD|USAGE_TOKEN)[ \t]*$' \
+   | grep -E '"[^"]{3,}"' >/dev/null; then
+  echo "pre-commit: staged changes look like they contain a real Wi-Fi password or usage token." >&2
+  echo "            Keep them in secrets.h (git-ignored). Run 'git diff --cached' to find the line." >&2
+  exit 1
+fi
+exit 0

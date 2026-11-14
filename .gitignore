@@ -1,0 +1,11 @@
+# Real credentials never go to git; each project ships a secrets.example.h instead.
+secrets.h
+
+# Local tooling / build output
+tools/bin/
+build/
+*.bin
+*.elf
+__pycache__/
+.vscode/
+.DS_Store

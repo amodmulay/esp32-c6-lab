@@ -1,0 +1,4 @@
+{
+  "description": "Clock + weather, swipe-through companion face, Claude Code usage, and Star Wars helmets",
+  "libraries": ["GFX Library for Arduino", "ArduinoJson"]
+}
