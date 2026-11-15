@@ -16,7 +16,7 @@ rotation only runs between those three, not on the other screens):
 5. **Star Wars helmets**: a random Stormtrooper, Darth Vader, Boba Fett or Clone Trooper drawn from simple shapes. Tap for another.
 6. **Plane spotter**: a radar of the aircraft within ~46 km of your location (north up, with each plane's heading) and a list of the
    4 nearest with callsign, type, altitude (ft), speed (kt) and distance. Data comes from the community ADS-B feed
-   [adsb.lol](https://adsb.lol) (no key); it refreshes every 15 seconds while the screen is showing.
+   [adsb.lol](https://adsb.lol) (no key); it refreshes every 15 seconds while the screen is showing. **Every 10 seconds it flips to a detail view of the closest aircraft** (airline from the callsign prefix, aircraft type, altitude, speed, heading, distance, and a dot-matrix picture rotated to its heading); tap to flip by hand. The radar fills the screen.
 
 Location comes from your IP address (or fixed values in `secrets.h`); weather comes from [Open-Meteo](https://open-meteo.com) (no API key).
 

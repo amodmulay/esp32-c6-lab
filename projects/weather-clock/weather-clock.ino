@@ -358,15 +358,16 @@ bool getPlanes() {
   WiFiClientSecure client;
   client.setInsecure();  // public aircraft data only
   HTTPClient http;
-  http.useHTTP10(true);  // no chunked encoding, so the body can be parsed straight from the stream
   http.begin(client, String("https://api.adsb.lol/v2/point/") + String(lat, 3) + "/" + String(lon, 3) + "/" + String((int)PL_RADIUS));
   http.setTimeout(10000);
   int code = http.GET();
   Serial.printf("planes http=%d\n", code);
   if (code != 200) { http.end(); return false; }
   JsonDocument d;
-  DeserializationError e = deserializeJson(d, http.getStream(), DeserializationOption::Filter(filter));
+  String body = http.getString();  // handles chunked transfer encoding
   http.end();
+  DeserializationError e = deserializeJson(d, body, DeserializationOption::Filter(filter));
+  body = "";
   if (e) { Serial.println("planes parse fail"); return false; }
   nPlanes = 0;
   for (JsonObject a : d["ac"].as<JsonArray>()) {
@@ -396,31 +397,34 @@ bool getPlanes() {
 }
 
 void drawPlanes() {
-  row(48, 4, 20, "PLANES", 2, C_ACC);
+  // The radar fills the whole screen (outer ring = PL_RADIUS, north up, you at the centre);
+  // text sits in the free corners above and below the circle.
+  const int cx = 86, cy = 160, R = 84;
   String head = !planesOk ? (planesFetched ? "no data" : "looking up...")
-                          : (nPlanes ? String(nPlanes) + " nearby (" + String((int)(PL_RADIUS * 1.852f)) + " km)" : "none in range");
-  row(49, 26, 12, head, 1, C_DIM);
-  // radar: you at the centre, north up, outer ring = PL_RADIUS
-  const int cx = 86, cy = 108, R = 58;
-  gfx->fillRect(0, 40, W, 132, C_BG);
+                          : (nPlanes ? String(nPlanes) + " nearby" : "none in range");
+  row(48, 6, 20, "PLANES", 2, C_ACC);
+  row(49, 30, 12, head, 1, C_DIM);
+  row(60, 44, 12, String((int)(PL_RADIUS * 1.852f)) + " km radius", 1, C_DIM);
+  gfx->fillRect(0, 70, W, 180, C_BG);
   gfx->drawCircle(cx, cy, R, C_DIM);
-  gfx->drawCircle(cx, cy, R / 2, C_DIM);
+  gfx->drawCircle(cx, cy, R * 2 / 3, C_DIM);
+  gfx->drawCircle(cx, cy, R / 3, C_DIM);
   gfx->drawFastHLine(cx - R, cy, 2 * R, C_DIM);
   gfx->drawFastVLine(cx, cy - R, 2 * R, C_DIM);
   gfx->setTextSize(1);
   gfx->setTextColor(C_DIM, C_BG);
-  gfx->setCursor(cx - 3, 40);
+  gfx->setCursor(cx + 3, cy - R + 2);
   gfx->print("N");
   gfx->fillCircle(cx, cy, 2, C_TIME);
-  for (int i = 0; i < nPlanes; i++) {
+  for (int i = nPlanes - 1; i >= 0; i--) {  // nearest drawn last, on top
     float r = min(planes[i].dst / PL_RADIUS, 1.0f) * R;
     float a = planes[i].dir * DEG_TO_RAD, h = planes[i].trk * DEG_TO_RAD;
     int px = cx + (int)(r * sinf(a)), py = cy - (int)(r * cosf(a));
-    gfx->drawLine(px, py, px + (int)(10 * sinf(h)), py - (int)(10 * cosf(h)), C_TIME);
-    gfx->fillCircle(px, py, i == 0 ? 4 : 3, i == 0 ? C_TEMP : C_ACC);
+    gfx->drawLine(px, py, px + (int)(12 * sinf(h)), py - (int)(12 * cosf(h)), C_TIME);
+    gfx->fillCircle(px, py, i == 0 ? 5 : 3, i == 0 ? C_TEMP : C_ACC);
   }
-  for (int i = 0; i < 4; i++) {
-    int y = 176 + i * 35;
+  for (int i = 0; i < 2; i++) {  // the two nearest, below the radar
+    int y = 254 + i * 33;
     if (i < nPlanes) {
       Plane &p = planes[i];
       row(50 + i * 2, y, 18, String(p.call) + " " + p.type, 2, i == 0 ? C_TEMP : C_TIME);
@@ -431,6 +435,156 @@ void drawPlanes() {
       row(51 + i * 2, y + 18, 12, "", 1, C_DIM);
     }
   }
+}
+
+// ---- closest-aircraft detail view: airline, type and a dot-matrix picture rotated to its heading ----
+struct Pair { const char *code; const char *name; };
+const Pair AIRLINES[] = {
+  {"DLH", "Lufthansa"}, {"EWG", "Eurowings"}, {"CFG", "Condor"}, {"BAW", "British Airways"}, {"RYR", "Ryanair"},
+  {"EZY", "easyJet"}, {"EZS", "easyJet Switzerland"}, {"AFR", "Air France"}, {"KLM", "KLM"}, {"SWR", "Swiss"},
+  {"AUA", "Austrian"}, {"IBE", "Iberia"}, {"VLG", "Vueling"}, {"SAS", "SAS"}, {"FIN", "Finnair"}, {"LOT", "LOT Polish"},
+  {"TAP", "TAP Portugal"}, {"ITY", "ITA Airways"}, {"BEL", "Brussels Airlines"}, {"EIN", "Aer Lingus"},
+  {"NAX", "Norwegian"}, {"NOZ", "Norwegian"}, {"WZZ", "Wizz Air"}, {"TUI", "TUI fly"}, {"TOM", "TUI Airways"},
+  {"DLA", "Air Dolomiti"}, {"BCS", "European Air Transport"}, {"GEC", "Lufthansa Cargo"}, {"CLX", "Cargolux"},
+  {"UAE", "Emirates"}, {"ETD", "Etihad"}, {"QTR", "Qatar Airways"}, {"THY", "Turkish Airlines"}, {"PGT", "Pegasus"},
+  {"AEE", "Aegean"}, {"ELY", "El Al"}, {"SVA", "Saudia"}, {"MSR", "EgyptAir"}, {"ETH", "Ethiopian"}, {"SAA", "South African"},
+  {"UAL", "United"}, {"DAL", "Delta"}, {"AAL", "American"}, {"SWA", "Southwest"}, {"JBU", "JetBlue"}, {"ACA", "Air Canada"},
+  {"ANA", "ANA"}, {"JAL", "Japan Airlines"}, {"SIA", "Singapore Airlines"}, {"CPA", "Cathay Pacific"}, {"QFA", "Qantas"},
+  {"KAL", "Korean Air"}, {"AAR", "Asiana"}, {"THA", "Thai Airways"}, {"MAS", "Malaysia Airlines"}, {"AIC", "Air India"},
+  {"CCA", "Air China"}, {"CSN", "China Southern"}, {"CES", "China Eastern"}, {"FDX", "FedEx"}, {"UPS", "UPS"},
+  {"DHK", "DHL"}, {"DHX", "DHL"}, {"NJE", "NetJets Europe"}, {"EJU", "easyJet Europe"}, {"TVF", "Transavia France"},
+  {"TRA", "Transavia"}, {"BEE", "Flybe"}, {"LGL", "Luxair"}, {"AZA", "Alitalia"}, {"SXS", "SunExpress"},
+  {"OAW", "Helvetic"}, {"EDW", "Edelweiss"}, {"CAI", "Corendon"}, {"GWI", "Germanwings"}, {"RCH", "US Air Force"},
+};
+
+String airlineName(const char *call) {
+  String c = call;
+  if (c.length() >= 4 && isUpperCase(c[0]) && isUpperCase(c[1]) && isUpperCase(c[2]) && isDigit(c[3])) {
+    for (const Pair &a : AIRLINES)
+      if (c.startsWith(a.code)) return a.name;
+    return String("Airline ") + c.substring(0, 3);
+  }
+  return "Private / other";
+}
+
+const Pair TYPES[] = {
+  {"A20N", "A320neo"}, {"A21N", "A321neo"}, {"A19N", "A319neo"}, {"A318", "A318"}, {"A319", "A319"}, {"A320", "A320"},
+  {"A321", "A321"}, {"A332", "A330-200"}, {"A333", "A330-300"}, {"A338", "A330-800"}, {"A339", "A330-900"},
+  {"A359", "A350-900"}, {"A35K", "A350-1000"}, {"A388", "A380-800"}, {"A343", "A340-300"}, {"A346", "A340-600"},
+  {"B737", "737-700"}, {"B738", "737-800"}, {"B739", "737-900"}, {"B38M", "737 MAX 8"}, {"B39M", "737 MAX 9"},
+  {"B744", "747-400"}, {"B748", "747-8"}, {"B752", "757-200"}, {"B763", "767-300"}, {"B772", "777-200"},
+  {"B77W", "777-300ER"}, {"B788", "787-8"}, {"B789", "787-9"}, {"B78X", "787-10"}, {"E170", "Embraer 170"},
+  {"E190", "Embraer 190"}, {"E195", "Embraer 195"}, {"E75L", "Embraer 175"}, {"E290", "Embraer E190-E2"},
+  {"CRJ7", "CRJ-700"}, {"CRJ9", "CRJ-900"}, {"BCS1", "A220-100"}, {"BCS3", "A220-300"}, {"DH8D", "Dash 8 Q400"},
+  {"AT75", "ATR 72-500"}, {"AT76", "ATR 72-600"}, {"AT72", "ATR 72"}, {"C172", "Cessna 172"}, {"PC12", "Pilatus PC-12"},
+  {"CL60", "Challenger 600"}, {"GLF4", "Gulfstream IV"}, {"GLF5", "Gulfstream V"}, {"C56X", "Citation Excel"},
+};
+
+String typeName(const char *t) {
+  for (const Pair &x : TYPES)
+    if (strcmp(x.code, t) == 0) return x.name;
+  return t[0] ? String(t) : String("Unknown type");
+}
+
+// 0 narrow-body jet, 1 wide-body twin, 2 four-engine, 3 regional jet, 4 propeller, 5 helicopter
+int planeCategory(const char *t) {
+  String y = t;
+  y.toUpperCase();
+  if (y == "A388" || y == "B744" || y == "B748" || y == "A343" || y == "A345" || y == "A346" || y == "B742" || y == "B743") return 2;
+  const char *heli[] = {"EC", "AS3", "AS5", "A109", "A139", "A169", "A189", "R22", "R44", "R66", "B06", "B407", "B412", "B429", "S76", "S92"};
+  for (const char *h : heli) if (y.startsWith(h)) return 5;
+  if (y.length() >= 2 && y[0] == 'H' && isDigit(y[1])) return 5;
+  if (y == "A310" || y.startsWith("A30") || y.startsWith("A33") || y.startsWith("A35") || y.startsWith("B76") || y.startsWith("B77") ||
+      y.startsWith("B78")) return 1;
+  const char *reg[] = {"E1", "E2", "E7", "CRJ", "BCS", "RJ", "F70", "F100"};
+  for (const char *h : reg) if (y.startsWith(h)) return 3;
+  const char *prop[] = {"AT", "DH8", "DHC", "SF3", "C1", "C2", "PA", "SR2", "BE", "PC", "TB", "DA", "P28", "M20", "F50", "JS", "B190"};
+  for (const char *h : prop) if (y.startsWith(h)) return 4;
+  return 0;
+}
+
+// Is the point (u = to the right of the nose direction, v = along it; about -1..1) part of the aircraft silhouette?
+bool inPlane(float u, float v, int cat) {
+  float au = fabsf(u);
+  if (cat == 5) {  // helicopter: rotor ring, body, tail boom, tail rotor
+    float rr = sqrtf(u * u + (v - 0.1f) * (v - 0.1f));
+    if (fabsf(rr - 0.82f) < 0.045f) return true;
+    float ex = u / 0.15f, ey = (v - 0.1f) / 0.32f;
+    if (ex * ex + ey * ey < 1) return true;
+    if (au < 0.04f && v > -0.85f && v < -0.15f) return true;
+    return au < 0.13f && v < -0.78f && v > -0.9f;
+  }
+  float fw = cat == 1 ? 0.10f : (cat == 2 ? 0.11f : (cat == 4 ? 0.075f : 0.085f));
+  float span = cat == 1 ? 0.95f : (cat == 2 ? 0.98f : (cat == 3 ? 0.68f : (cat == 4 ? 0.86f : 0.82f)));
+  float w = fw;
+  if (v > 0.6f) w = fw * (0.98f - v) / 0.38f;
+  else if (v < -0.68f) w = fw * (0.5f + 0.5f * (v + 0.96f) / 0.28f);
+  if (v > -0.96f && v < 0.98f && au < w) return true;
+  if (cat == 4) {  // straight wing, small tailplane, engine nacelles with propeller discs
+    if (au > 0.05f && au < span && v > 0.0f && v < 0.2f) return true;
+    if (au < 0.28f && v > -0.9f && v < -0.76f) return true;
+    return fabsf(au - 0.3f) < 0.05f && v > 0.18f && v < 0.3f;
+  }
+  float sweep = cat == 3 ? 0.5f : 0.62f;
+  float le = 0.18f - (au - 0.08f) * sweep;
+  float chord = (cat == 3 ? 0.26f : 0.34f) - (au - 0.08f) * 0.28f;
+  if (au > 0.06f && au < span && v < le && v > le - chord) return true;
+  float tle = -0.62f - (au - 0.06f) * 0.5f;
+  if (au > 0.06f && au < (cat == 3 ? 0.26f : 0.34f) && v < tle && v > tle - 0.14f) return true;
+  if (cat == 3) return fabsf(au - 0.16f) < 0.045f && v > -0.62f && v < -0.42f;  // rear-mounted engines
+  if (fabsf(au - 0.3f) < 0.045f && v > -0.06f && v < 0.12f) return true;
+  if (cat == 2 && fabsf(au - 0.52f) < 0.045f && v > -0.14f && v < 0.04f) return true;
+  return false;
+}
+
+void drawPlaneImage(float trackDeg, int cat, uint16_t col) {
+  const int cx = 86, cy = 150, N = 26, STEP = 5;
+  const float S = (N / 2.0f) * STEP;  // 1 unit in pixels
+  float th = trackDeg * DEG_TO_RAD, sn = sinf(th), cs = cosf(th);
+  uint16_t off = gfx->color565(28, 34, 44);
+  gfx->fillRect(cx - 70, cy - 70, 140, 140, C_BG);
+  for (int gy = 0; gy < N; gy++)
+    for (int gx = 0; gx < N; gx++) {
+      float dx = (gx - (N - 1) / 2.0f) * STEP, dy = (gy - (N - 1) / 2.0f) * STEP;
+      float u0 = dx / S, v0 = -dy / S;  // screen frame: north up
+      float v = u0 * sn + v0 * cs;      // along the nose
+      float u = u0 * cs - v0 * sn;      // to the right of the nose
+      int px = cx + (int)dx, py = cy + (int)dy;
+      if (inPlane(u, v, cat)) gfx->fillCircle(px, py, 2, col);
+      else gfx->drawPixel(px, py, off);
+    }
+}
+
+const char *compass8(float deg) {
+  static const char *n[] = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"};
+  return n[((int)((deg + 22.5f) / 45.0f)) % 8];
+}
+
+int planesView = 0;  // 0 = radar, 1 = closest-aircraft details
+unsigned long viewAt = 0;
+const unsigned long VIEW_EVERY = 10000;
+
+void drawPlaneDetail() {
+  if (!nPlanes) return;
+  Plane &p = planes[0];
+  String al = airlineName(p.call);
+  row(48, 6, 22, al, fitSize(al, 2), C_ACC);
+  row(49, 32, 26, p.call, 3, C_TEMP);
+  drawPlaneImage(p.trk, planeCategory(p.type), gfx->color565(255, 190, 60));
+  String ty = typeName(p.type);
+  row(50, 236, 18, ty, fitSize(ty, 2), C_TIME);
+  String a = String(p.alt) + "ft " + String(p.gs) + "kt";
+  row(51, 258, 18, a, fitSize(a, 2), C_TIME);
+  String d = "hdg " + String((int)lroundf(p.trk)) + "   " + String((int)lroundf(p.dst * 1.852f)) + " km " + compass8(p.dir);
+  row(52, 280, 14, d, 1, C_DIM);
+  row(53, 298, 14, "closest of " + String(nPlanes), 1, C_DIM);
+}
+
+void showPlanesView() {  // full redraw of the current view
+  if (planesView == 1 && !nPlanes) planesView = 0;
+  gfx->fillScreen(C_BG);
+  for (auto &c : cache) c = "";
+  if (planesView) drawPlaneDetail(); else drawPlanes();
 }
 
 // ---- temperature detail: tap the temperature to see temp, feels-like and forecast in big text ----
@@ -709,6 +863,8 @@ void setMode(int m) {  // int, not Mode: Arduino's auto-prototypes are emitted b
     for (auto &s : cache) s = "";
     planesFetched = false;
     lastPlanes = 0;
+    planesView = 0;
+    viewAt = millis() + VIEW_EVERY;
     drawPlanes();
   } else {
     gfx->fillScreen(C_BG);
@@ -890,6 +1046,7 @@ void loop() {
   if (g == 1) { setMode((mode + 1) % N_MODES); lastDraw = 0; }
   else if (g == 2 && mode == M_FACE) react();
   else if (g == 2 && mode == M_HELMET) drawHelmet(pickHelmet());
+  else if (g == 2 && mode == M_PLANES && nPlanes) { planesView ^= 1; viewAt = millis() + VIEW_EVERY; showPlanesView(); }
   else if (g == 2 && mode == M_INFO) {
     int tx, ty;
     board_gesture_point(tx, ty);
@@ -905,7 +1062,11 @@ void loop() {
       getPlanes();
       planesFetched = true;
       lastPlanes = millis();
-      drawPlanes();
+      if (planesView == 1 && nPlanes) drawPlaneDetail(); else showPlanesView();
+    }
+    if (millis() > viewAt) {  // every 10 s: radar <-> details of the closest aircraft
+      viewAt = millis() + VIEW_EVERY;
+      if (nPlanes) { planesView ^= 1; showPlanesView(); }
     }
   } else if (mode == M_MARKET && millis() - lastDraw > 500) {
     lastDraw = millis();
