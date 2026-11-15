@@ -4,9 +4,12 @@ Clock and weather for the ESP32-C6-Touch-LCD-1.47, plus a few fun screens. **Swi
 
 1. **Clock + weather**: time (NTP), date, city, temperature, conditions, 3-day forecast.
    **Tap the temperature** for a full-screen view of the temperature, feels-like and forecast in large text; tap again to go back.
+   The clock/weather screen and the **Markets** screen (S&P 500, DAX, NASDAQ with change vs. previous close) **rotate by themselves every 5 seconds**. Any touch restarts the timer; opening the temperature detail view or swiping to another screen stops the rotation.
 2. **Companion face**: two eyes and a smile that blink at random, glance around, and react when tapped (wink, hearts, happy eyes).
 3. **Claude Code usage**: 5-hour and weekly limits as bars with reset countdowns, plus session context use.
 4. **Star Wars helmets**: a random Stormtrooper, Darth Vader, Boba Fett or Clone Trooper drawn from simple shapes. Tap for another.
+
+Index quotes come from Yahoo Finance's public chart endpoint (no API key, unofficial, may be delayed) and refresh every 5 minutes. They are informational only.
 
 Location comes from your IP address (or fixed values in `secrets.h`); weather comes from [Open-Meteo](https://open-meteo.com) (no API key).
 

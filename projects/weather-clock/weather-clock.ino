@@ -11,7 +11,8 @@
 #include "secrets.h"
 
 const int W = C6_WIDTH;
-uint16_t C_BG, C_TIME, C_DIM, C_TEMP, C_ACC, C_WARN;
+int fitSize(const String &s, int maxSize);
+uint16_t C_BG, C_TIME, C_DIM, C_TEMP, C_ACC, C_WARN, C_UP;
 
 struct Weather {
   bool ok = false;
@@ -30,7 +31,7 @@ unsigned long lastWeather = 0;
 const unsigned long WEATHER_EVERY = 15UL * 60UL * 1000UL;
 
 // ---- text slots: only repaint a row when its text changed ----
-String cache[32];
+String cache[48];
 void row(int slot, int y, int h, const String &s, int size, uint16_t fg, int align = 1) {
   if (cache[slot] == s) return;
   cache[slot] = s;
@@ -160,6 +161,43 @@ bool getWeather() {
   return true;
 }
 
+// ---- stock indices (Yahoo Finance chart endpoint, no API key) ----
+struct Index { const char *name; const char *sym; bool ok; float price, prev; };
+Index idx[3] = {{"S&P 500", "%5EGSPC", false, 0, 0}, {"DAX", "%5EGDAXI", false, 0, 0}, {"NASDAQ", "%5EIXIC", false, 0, 0}};
+unsigned long lastMarket = 0;
+const unsigned long MARKET_EVERY = 5UL * 60UL * 1000UL;
+bool marketTried = false;
+
+bool getMarkets() {
+  bool any = false;
+  JsonDocument filter;
+  filter["chart"]["result"][0]["meta"]["regularMarketPrice"] = true;
+  filter["chart"]["result"][0]["meta"]["chartPreviousClose"] = true;
+  for (auto &q : idx) {
+    WiFiClientSecure client;
+    client.setInsecure();  // public market data only
+    HTTPClient http;
+    http.begin(client, String("https://query1.finance.yahoo.com/v8/finance/chart/") + q.sym + "?interval=1d&range=1d");
+    http.addHeader("User-Agent", "Mozilla/5.0");
+    http.setTimeout(8000);
+    int code = http.GET();
+    Serial.printf("mkt %s http=%d\n", q.name, code);
+    if (code == 200) {
+      JsonDocument d;
+      DeserializationError e = deserializeJson(d, http.getString(), DeserializationOption::Filter(filter));
+      JsonObject m = d["chart"]["result"][0]["meta"];
+      if (!e && !m["regularMarketPrice"].isNull()) {
+        q.price = m["regularMarketPrice"];
+        q.prev = m["chartPreviousClose"] | 0.0f;
+        q.ok = true;
+        any = true;
+      }
+    }
+    http.end();
+  }
+  return any;
+}
+
 void drawStatic() {
   gfx->fillScreen(C_BG);
   for (auto &s : cache) s = "";
@@ -190,6 +228,33 @@ void drawWeather() {
     String s = wx.dayName[i] + " " + String((int)lroundf(wx.hi[i])) + "/" + String((int)lroundf(wx.lo[i])) + " " + wmo(wx.dcode[i]);
     if (s.length() > 28) s = s.substring(0, 28);
     row(9 + i, 240 + i * 24, 20, s, 1, i == 0 ? C_TIME : C_DIM);
+  }
+}
+
+String fmtPrice(float v) {  // 25136.27 -> "25,136.27"
+  char b[16];
+  snprintf(b, sizeof b, "%.2f", v);
+  String s = b;
+  int dot = s.indexOf('.');
+  for (int i = dot - 3; i > 0; i -= 3) s = s.substring(0, i) + "," + s.substring(i);
+  return s;
+}
+
+void drawMarkets() {
+  row(26, 6, 20, "MARKETS", 2, C_ACC);
+  for (int i = 0; i < 3; i++) {
+    int y = 40 + i * 92;
+    Index &q = idx[i];
+    if (i > 0) { if (cache[27 + i * 4] != "line") { cache[27 + i * 4] = "line"; gfx->drawFastHLine(10, y - 4, W - 20, C_DIM); } }
+    row(28 + i * 4, y, 18, q.name, 2, C_TIME);
+    if (!q.ok) { row(29 + i * 4, y + 24, 44, marketTried ? "no data" : "loading", 2, C_DIM); row(30 + i * 4, y + 66, 18, "", 2, C_DIM); continue; }
+    String p = fmtPrice(q.price);
+    row(29 + i * 4, y + 22, 28, p, fitSize(p, 3), C_TEMP);
+    float chg = q.price - q.prev, pct = q.prev > 0 ? chg / q.prev * 100.0f : 0;
+    char b[24];
+    snprintf(b, sizeof b, "%c%.2f%%", chg >= 0 ? '+' : '-', fabsf(pct));
+    String c = b;
+    row(30 + i * 4, y + 56, 20, c, 2, chg >= 0 ? C_UP : C_WARN);
   }
 }
 
@@ -299,8 +364,10 @@ void drawUsage() {
 }
 
 // ---- companion face ----
-enum Mode { M_INFO, M_FACE, M_USAGE, M_HELMET };
-const int N_MODES = 4;
+enum Mode { M_INFO, M_MARKET, M_FACE, M_USAGE, M_HELMET };
+const int N_MODES = 5;
+const unsigned long ROTATE_EVERY = 5000;  // clock/weather <-> markets
+unsigned long lastRotate = 0;
 Mode mode = M_INFO;
 unsigned long nextBlink = 0, nextGlance = 0;
 int eyeDx = 0;  // horizontal glance offset
@@ -448,6 +515,7 @@ void setMode(int m) {  // int, not Mode: Arduino's auto-prototypes are emitted b
   mode = (Mode)m;
   eyeDx = 0;
   showDetail = false;
+  lastRotate = millis();
   if (m == M_INFO) {
     drawStatic();
   } else if (m == M_FACE) {
@@ -496,6 +564,7 @@ void setup() {
   C_TEMP = gfx->color565(255, 190, 60);
   C_ACC = gfx->color565(60, 200, 255);
   C_WARN = gfx->color565(255, 80, 80);
+  C_UP = gfx->color565(70, 220, 120);
   gfx->fillScreen(C_BG);
 
   if (!connectWifi()) {
@@ -506,6 +575,9 @@ void setup() {
   status("Getting data...");
   Serial.printf("wifi ok ip=%s rssi=%d\n", WiFi.localIP().toString().c_str(), WiFi.RSSI());
   getWeather();
+  getMarkets();
+  marketTried = true;
+  lastMarket = millis();
   drawStatic();
   lastWeather = millis();
 }
@@ -520,6 +592,11 @@ void loop() {
     getWeather();
     lastWeather = millis();
   }
+  if (WiFi.status() == WL_CONNECTED && millis() - lastMarket > MARKET_EVERY) {
+    getMarkets();
+    marketTried = true;
+    lastMarket = millis();
+  }
   static unsigned long lastDraw = 0;
   if (WiFi.status() == WL_CONNECTED) {
     if (!serverStarted) {
@@ -531,6 +608,12 @@ void loop() {
     server.handleClient();
   }
   int g = board_gesture();
+  if (g) lastRotate = millis();  // any touch restarts the 5 s timer
+  // auto-rotate between clock/weather and markets (not while the detail view is open or on other screens)
+  if ((mode == M_INFO || mode == M_MARKET) && !showDetail && millis() - lastRotate > ROTATE_EVERY) {
+    setMode(mode == M_INFO ? M_MARKET : M_INFO);
+    lastDraw = 0;
+  }
   if (g == 1) { setMode((mode + 1) % N_MODES); lastDraw = 0; }
   else if (g == 2 && mode == M_FACE) react();
   else if (g == 2 && mode == M_HELMET) drawHelmet(pickHelmet());
@@ -544,6 +627,9 @@ void loop() {
   }
   if (mode == M_FACE) {
     faceTick();
+  } else if (mode == M_MARKET && millis() - lastDraw > 500) {
+    lastDraw = millis();
+    drawMarkets();
   } else if (mode == M_USAGE && millis() - lastDraw > 1000) {
     lastDraw = millis();
     drawUsage();
