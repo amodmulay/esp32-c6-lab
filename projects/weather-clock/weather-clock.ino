@@ -69,37 +69,52 @@ void status(const String &a, const String &b = "") {
   if (b.length()) row(1, 150, 16, b, 1, C_DIM);
 }
 
-// When both known networks are in range at boot, let the user pick: tap switches the highlight
-// (orientation-independent), and the highlighted one is used after a few seconds of no touch.
-int chooseWifi(const char *a, const char *b) {
-  const char *names[2] = {a, b};
-  int sel = 0, shown = -1, lastSec = -1;
-  unsigned long deadline = millis() + 8000;
+// Known networks (from secrets.h). A network is only offered when it is in range.
+struct Known { const char *ssid; const char *pass; };
+const Known KNOWN[] = {
+  {WIFI_SSID, WIFI_PASSWORD},
+#ifdef WIFI_SSID2
+  {WIFI_SSID2, WIFI_PASSWORD2},
+#endif
+#ifdef WIFI_SSID3
+  {WIFI_SSID3, WIFI_PASSWORD3},
+#endif
+};
+const int N_KNOWN = sizeof(KNOWN) / sizeof(KNOWN[0]);
+
+// At every boot, list the known networks that are in range and wait for the user to choose.
+// TAP moves the highlight to the next network, SWIPE connects to the highlighted one. Nothing
+// connects until you swipe. (Tap/swipe need no knowledge of the touch panel's orientation.)
+// `mask` bit i = KNOWN[i] is in range. Returns the index into KNOWN.
+int chooseWifi(int mask) {
+  int map[4], cnt = 0;
+  for (int i = 0; i < N_KNOWN; i++) if (mask & (1 << i)) map[cnt++] = i;
+  int sel = 0, shown = -1;
   for (auto &c : cache) c = "";
   gfx->fillScreen(C_BG);
   row(40, 8, 24, "Choose Wi-Fi", 2, C_TIME);
-  while (millis() < deadline) {
-    if (board_gesture()) { sel = 1 - sel; deadline = millis() + 5000; }
+  row(41, 36, 14, "tap = next   swipe = connect", 1, C_DIM);
+  while (true) {
+    int g = board_gesture();
+    if (g == BOARD_SWIPE) return map[sel];
+    if (g == BOARD_TAP && cnt > 1) sel = (sel + 1) % cnt;
     if (sel != shown) {
       shown = sel;
-      for (int i = 0; i < 2; i++) {
-        int y = 56 + i * 96;
+      for (int i = 0; i < cnt; i++) {
+        int y = 60 + i * 84;
         bool on = i == sel;
-        gfx->fillRoundRect(8, y, W - 16, 80, 10, on ? C_ACC : C_BG);
-        gfx->drawRoundRect(8, y, W - 16, 80, 10, on ? C_ACC : C_DIM);
-        String n = names[i];
+        gfx->fillRoundRect(8, y, W - 16, 72, 10, on ? C_ACC : C_BG);
+        gfx->drawRoundRect(8, y, W - 16, 72, 10, on ? C_ACC : C_DIM);
+        String n = KNOWN[map[i]].ssid;
         int sz = fitSize(n, 2);
         gfx->setTextSize(sz);
         gfx->setTextColor(on ? C_BG : C_TIME, on ? C_ACC : C_BG);
-        gfx->setCursor(max(10, (W - (int)n.length() * 6 * sz) / 2), y + (80 - 8 * sz) / 2);
+        gfx->setCursor(max(10, (W - (int)n.length() * 6 * sz) / 2), y + (72 - 8 * sz) / 2);
         gfx->print(n);
       }
     }
-    int sec = (int)((deadline - millis() + 999) / 1000);
-    if (sec != lastSec) { lastSec = sec; row(41, 262, 16, "Connecting in " + String(sec) + "s", 1, C_DIM); row(42, 282, 16, "tap to switch", 1, C_DIM); }
     delay(15);
   }
-  return sel;
 }
 
 WiFiMulti wifiMulti;  // joins the strongest known network: home Wi-Fi, or the phone hotspot as a fallback
@@ -115,26 +130,21 @@ bool connectWifi() {
     Serial.printf("wifi disconnect reason=%d (201=AP not found, 2/15/202=auth/password, 204=handshake timeout)\n",
                   info.wifi_sta_disconnected.reason);
   }, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
-#ifdef WIFI_SSID2
-  bool seen1 = false, seen2 = false;
   int found = WiFi.scanNetworks();
-  for (int i = 0; i < found; i++) {
-    if (WiFi.SSID(i) == WIFI_SSID) seen1 = true;
-    if (WiFi.SSID(i) == WIFI_SSID2) seen2 = true;
-  }
-  Serial.printf("known networks in range: %s=%d %s=%d\n", WIFI_SSID, seen1, WIFI_SSID2, seen2);
-  if (seen1 && seen2) {
-    int pick = chooseWifi(WIFI_SSID, WIFI_SSID2);
-    Serial.printf("user chose %d\n", pick);
-    status("Wi-Fi...", pick ? WIFI_SSID2 : WIFI_SSID);
-    if (pick) wifiMulti.addAP(WIFI_SSID2, WIFI_PASSWORD2); else wifiMulti.addAP(WIFI_SSID, WIFI_PASSWORD);
+  int mask = 0;
+  for (int i = 0; i < found; i++)
+    for (int k = 0; k < N_KNOWN; k++)
+      if (WiFi.SSID(i) == KNOWN[k].ssid) mask |= 1 << k;
+  Serial.printf("known networks in range (bitmask): %d\n", mask);
+  if (mask) {
+    int pick = chooseWifi(mask);
+    Serial.printf("user chose %s\n", KNOWN[pick].ssid);
+    status("Wi-Fi...", KNOWN[pick].ssid);
+    wifiMulti.addAP(KNOWN[pick].ssid, KNOWN[pick].pass);
   } else {
-    wifiMulti.addAP(WIFI_SSID, WIFI_PASSWORD);
-    wifiMulti.addAP(WIFI_SSID2, WIFI_PASSWORD2);
+    status("No known Wi-Fi", "searching...");
+    for (int k = 0; k < N_KNOWN; k++) wifiMulti.addAP(KNOWN[k].ssid, KNOWN[k].pass);
   }
-#else
-  wifiMulti.addAP(WIFI_SSID, WIFI_PASSWORD);
-#endif
   wifiMulti.run(20000);
   if (WiFi.status() == WL_CONNECTED) Serial.printf("wifi joined '%s'\n", WiFi.SSID().c_str());
   if (WiFi.status() != WL_CONNECTED) {

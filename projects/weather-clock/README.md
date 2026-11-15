@@ -39,11 +39,14 @@ Each `--w` is `label|percent|reset time (UTC, ISO-8601)`; up to three. In Claude
 The screen shows how long ago the last push was. If `clockbuddy.local` doesn't resolve, add `--host <board IP>`
 (the IP is shown on the usage screen before the first push).
 
-## Phone hotspot fallback
+## Wi-Fi choice (home network, phone hotspots)
 
-Uncomment `WIFI_SSID2` / `WIFI_PASSWORD2` in `secrets.h` to add a second network, such as your phone's hotspot.
-If only one of them is in range, the board joins it (and retries both if the connection drops). If **both** are in range at boot, a "Choose Wi-Fi" screen appears: **tap to switch** the highlighted network; it connects after 8 seconds (5 seconds after your last tap), defaulting to the first (`WIFI_SSID`). The hotspot must be
-2.4 GHz (iPhone: Personal Hotspot > Maximize Compatibility). On a hotspot, weather and market data use mobile data.
+`secrets.h` can hold up to three known networks (`WIFI_SSID`, `WIFI_SSID2`, `WIFI_SSID3`, each with a password).
+At every boot the board scans and shows a **Choose Wi-Fi** screen listing the known networks that are in range.
+**Tap** moves the highlight to the next one, **swipe** connects to the highlighted one. It never connects on its own
+while that screen is up. If none of them is in range it keeps trying all of them. Hotspots must be 2.4 GHz
+(iPhone: Personal Hotspot > Maximize Compatibility, and keep that screen open while the board scans). On a
+hotspot, weather and market data use mobile data.
 
 ## Notes
 

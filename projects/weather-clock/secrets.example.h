@@ -6,6 +6,8 @@
 // The board joins whichever known network is strongest and falls back to the other when one is gone.
 // #define WIFI_SSID2 "MY_PHONE"
 // #define WIFI_PASSWORD2 "HOTSPOT_PASSWORD"
+// #define WIFI_SSID3 "OTHER_HOTSPOT"       // optional third network
+// #define WIFI_PASSWORD3 "PASSWORD"
 
 #define USE_24H 1          // 1 = 24-hour clock, 0 = 12-hour
 #define USE_FAHRENHEIT 0   // 0 = Celsius / km/h, 1 = Fahrenheit / mph
