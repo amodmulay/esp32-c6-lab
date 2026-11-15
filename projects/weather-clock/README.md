@@ -42,7 +42,7 @@ The screen shows how long ago the last push was. If `clockbuddy.local` doesn't r
 ## Phone hotspot fallback
 
 Uncomment `WIFI_SSID2` / `WIFI_PASSWORD2` in `secrets.h` to add a second network, such as your phone's hotspot.
-The board joins the strongest known network and retries both if the connection drops. The hotspot must be
+If only one of them is in range, the board joins it (and retries both if the connection drops). If **both** are in range at boot, a "Choose Wi-Fi" screen appears: **tap to switch** the highlighted network; it connects after 8 seconds (5 seconds after your last tap), defaulting to the first (`WIFI_SSID`). The hotspot must be
 2.4 GHz (iPhone: Personal Hotspot > Maximize Compatibility). On a hotspot, weather and market data use mobile data.
 
 ## Notes
