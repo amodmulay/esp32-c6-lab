@@ -2,6 +2,7 @@
 // Time: NTP.  Location: IP geolocation (or override in secrets.h).  Weather: Open-Meteo (no API key).
 #include <C6Board.h>  // shared screen + touch support (libraries/C6Board)
 #include <WiFi.h>
+#include <WiFiMulti.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
@@ -12,7 +13,7 @@
 
 const int W = C6_WIDTH;
 int fitSize(const String &s, int maxSize);
-uint16_t C_BG, C_TIME, C_DIM, C_TEMP, C_ACC, C_WARN, C_UP;
+uint16_t C_BG, C_TIME, C_DIM, C_TEMP, C_ACC, C_WARN, C_UP, C_CLOSED;
 
 struct Weather {
   bool ok = false;
@@ -68,6 +69,8 @@ void status(const String &a, const String &b = "") {
   if (b.length()) row(1, 150, 16, b, 1, C_DIM);
 }
 
+WiFiMulti wifiMulti;  // joins the strongest known network: home Wi-Fi, or the phone hotspot as a fallback
+
 bool connectWifi() {
   if (String(WIFI_SSID).length() == 0 || String(WIFI_SSID) == "YOUR_WIFI_NAME") {
     status("Set Wi-Fi", "edit secrets.h");
@@ -79,9 +82,12 @@ bool connectWifi() {
     Serial.printf("wifi disconnect reason=%d (201=AP not found, 2/15/202=auth/password, 204=handshake timeout)\n",
                   info.wifi_sta_disconnected.reason);
   }, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  unsigned long t = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - t < 20000) delay(250);
+  wifiMulti.addAP(WIFI_SSID, WIFI_PASSWORD);
+#ifdef WIFI_SSID2
+  wifiMulti.addAP(WIFI_SSID2, WIFI_PASSWORD2);
+#endif
+  wifiMulti.run(20000);
+  if (WiFi.status() == WL_CONNECTED) Serial.printf("wifi joined '%s'\n", WiFi.SSID().c_str());
   if (WiFi.status() != WL_CONNECTED) {
     Serial.printf("wifi FAILED status=%d (1=no SSID found, 4=connect failed/bad password, 6=disconnected)\n", WiFi.status());
     WiFi.disconnect(true);
@@ -162,8 +168,8 @@ bool getWeather() {
 }
 
 // ---- stock indices (Yahoo Finance chart endpoint, no API key) ----
-struct Index { const char *name; const char *sym; bool ok; float price, prev; };
-Index idx[3] = {{"S&P 500", "%5EGSPC", false, 0, 0}, {"DAX", "%5EGDAXI", false, 0, 0}, {"NASDAQ", "%5EIXIC", false, 0, 0}};
+struct Index { const char *name; const char *sym; bool ok; float price, prev; long rs, re; };  // rs/re: regular session start/end (epoch)
+Index idx[3] = {{"S&P 500", "%5EGSPC", false, 0, 0, 0, 0}, {"DAX", "%5EGDAXI", false, 0, 0, 0, 0}, {"NASDAQ", "%5EIXIC", false, 0, 0, 0, 0}};
 unsigned long lastMarket = 0;
 const unsigned long MARKET_EVERY = 5UL * 60UL * 1000UL;
 bool marketTried = false;
@@ -173,6 +179,7 @@ bool getMarkets() {
   JsonDocument filter;
   filter["chart"]["result"][0]["meta"]["regularMarketPrice"] = true;
   filter["chart"]["result"][0]["meta"]["chartPreviousClose"] = true;
+  filter["chart"]["result"][0]["meta"]["currentTradingPeriod"]["regular"] = true;
   for (auto &q : idx) {
     WiFiClientSecure client;
     client.setInsecure();  // public market data only
@@ -189,6 +196,8 @@ bool getMarkets() {
       if (!e && !m["regularMarketPrice"].isNull()) {
         q.price = m["regularMarketPrice"];
         q.prev = m["chartPreviousClose"] | 0.0f;
+        q.rs = m["currentTradingPeriod"]["regular"]["start"] | 0L;
+        q.re = m["currentTradingPeriod"]["regular"]["end"] | 0L;
         q.ok = true;
         any = true;
       }
@@ -231,6 +240,14 @@ void drawWeather() {
   }
 }
 
+// Market is closed when the current time is outside the exchange's regular session
+// (needs the NTP clock; with no valid time we assume open).
+bool marketClosed(long rs, long re) {  // plain types: Arduino auto-prototypes come before struct definitions
+  time_t now = time(nullptr);
+  if (now < 1700000000 || rs == 0 || re == 0) return false;
+  return now < rs || now > re;
+}
+
 String fmtPrice(float v) {  // 25136.27 -> "25,136.27"
   char b[16];
   snprintf(b, sizeof b, "%.2f", v);
@@ -253,8 +270,10 @@ void drawMarkets() {
     float chg = q.price - q.prev, pct = q.prev > 0 ? chg / q.prev * 100.0f : 0;
     char b[24];
     snprintf(b, sizeof b, "%c%.2f%%", chg >= 0 ? '+' : '-', fabsf(pct));
+    bool closed = marketClosed(q.rs, q.re);
     String c = b;
-    row(30 + i * 4, y + 56, 20, c, 2, chg >= 0 ? C_UP : C_WARN);
+    if (closed) c += " closed";
+    row(30 + i * 4, y + 56, 20, c, 2, closed ? C_CLOSED : (chg >= 0 ? C_UP : C_WARN));
   }
 }
 
@@ -565,6 +584,7 @@ void setup() {
   C_ACC = gfx->color565(60, 200, 255);
   C_WARN = gfx->color565(255, 80, 80);
   C_UP = gfx->color565(70, 220, 120);
+  C_CLOSED = gfx->color565(80, 150, 255);
   gfx->fillScreen(C_BG);
 
   if (!connectWifi()) {
@@ -585,8 +605,7 @@ void setup() {
 void loop() {
   if (String(WIFI_SSID) == "YOUR_WIFI_NAME") { delay(1000); return; }
   if (WiFi.status() != WL_CONNECTED) {
-    WiFi.reconnect();
-    delay(5000);
+    wifiMulti.run(8000);  // retries every known network
   }
   if (WiFi.status() == WL_CONNECTED && (millis() - lastWeather > WEATHER_EVERY || (!wx.ok && millis() - lastWeather > 30000))) {
     getWeather();

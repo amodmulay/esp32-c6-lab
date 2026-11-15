@@ -2,6 +2,10 @@
 // tools/flash.py creates secrets.h from this file the first time you flash (secrets.h is git-ignored).
 #define WIFI_SSID "YOUR_WIFI_NAME"          // 2.4 GHz network (the C6 cannot join 5 GHz-only)
 #define WIFI_PASSWORD "YOUR_WIFI_PASSWORD"
+// Optional second network, e.g. your phone's hotspot (2.4 GHz; on iPhone enable "Maximize Compatibility").
+// The board joins whichever known network is strongest and falls back to the other when one is gone.
+// #define WIFI_SSID2 "MY_PHONE"
+// #define WIFI_PASSWORD2 "HOTSPOT_PASSWORD"
 
 #define USE_24H 1          // 1 = 24-hour clock, 0 = 12-hour
 #define USE_FAHRENHEIT 0   // 0 = Celsius / km/h, 1 = Fahrenheit / mph

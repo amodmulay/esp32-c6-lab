@@ -9,6 +9,8 @@ Clock and weather for the ESP32-C6-Touch-LCD-1.47, plus a few fun screens. **Swi
 3. **Claude Code usage**: 5-hour and weekly limits as bars with reset countdowns, plus session context use.
 4. **Star Wars helmets**: a random Stormtrooper, Darth Vader, Boba Fett or Clone Trooper drawn from simple shapes. Tap for another.
 
+Index changes are green (up) or red (down); when an exchange is outside its regular trading hours the line turns **blue** and says "closed".
+
 Index quotes come from Yahoo Finance's public chart endpoint (no API key, unofficial, may be delayed) and refresh every 5 minutes. They are informational only.
 
 Location comes from your IP address (or fixed values in `secrets.h`); weather comes from [Open-Meteo](https://open-meteo.com) (no API key).
@@ -36,6 +38,12 @@ python projects/weather-clock/push_usage.py --plan Pro --ctx 15 \
 Each `--w` is `label|percent|reset time (UTC, ISO-8601)`; up to three. In Claude Code, ask it to read your usage and push it.
 The screen shows how long ago the last push was. If `clockbuddy.local` doesn't resolve, add `--host <board IP>`
 (the IP is shown on the usage screen before the first push).
+
+## Phone hotspot fallback
+
+Uncomment `WIFI_SSID2` / `WIFI_PASSWORD2` in `secrets.h` to add a second network, such as your phone's hotspot.
+The board joins the strongest known network and retries both if the connection drops. The hotspot must be
+2.4 GHz (iPhone: Personal Hotspot > Maximize Compatibility). On a hotspot, weather and market data use mobile data.
 
 ## Notes
 
