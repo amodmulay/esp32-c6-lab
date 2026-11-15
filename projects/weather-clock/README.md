@@ -44,7 +44,7 @@ The screen shows how long ago the last push was. If `clockbuddy.local` doesn't r
 `secrets.h` can hold up to three known networks (`WIFI_SSID`, `WIFI_SSID2`, `WIFI_SSID3`, each with a password).
 At every boot the board scans and shows a **Choose Wi-Fi** screen listing the known networks that are in range.
 **Tap** moves the highlight to the next one, **swipe** connects to the highlighted one. It never connects on its own
-while that screen is up. If none of them is in range it keeps trying all of them. Hotspots must be 2.4 GHz
+while that screen is up. If the connection is lost for more than 15 seconds, the board returns to this screen so you can choose again. If none of them is in range it keeps trying all of them. Hotspots must be 2.4 GHz
 (iPhone: Personal Hotspot > Maximize Compatibility, and keep that screen open while the board scans). On a
 hotspot, weather and market data use mobile data.
 

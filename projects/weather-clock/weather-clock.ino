@@ -117,7 +117,7 @@ int chooseWifi(int mask) {
   }
 }
 
-WiFiMulti wifiMulti;  // joins the strongest known network: home Wi-Fi, or the phone hotspot as a fallback
+WiFiMulti *wifiMulti = nullptr;  // joins the strongest known network: home Wi-Fi, or the phone hotspot as a fallback
 
 bool connectWifi() {
   if (String(WIFI_SSID).length() == 0 || String(WIFI_SSID) == "YOUR_WIFI_NAME") {
@@ -126,10 +126,15 @@ bool connectWifi() {
   }
   status("Wi-Fi...", WIFI_SSID);
   WiFi.mode(WIFI_STA);
+  static bool handlerSet = false;  // connectWifi() runs again after a lost connection
+  if (!handlerSet) { handlerSet = true;
   WiFi.onEvent([](arduino_event_id_t, arduino_event_info_t info) {
     Serial.printf("wifi disconnect reason=%d (201=AP not found, 2/15/202=auth/password, 204=handshake timeout)\n",
                   info.wifi_sta_disconnected.reason);
   }, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
+  }
+  delete wifiMulti;  // fresh list each time (this function can run again after a lost connection)
+  wifiMulti = new WiFiMulti();
   int found = WiFi.scanNetworks();
   int mask = 0;
   for (int i = 0; i < found; i++)
@@ -140,12 +145,12 @@ bool connectWifi() {
     int pick = chooseWifi(mask);
     Serial.printf("user chose %s\n", KNOWN[pick].ssid);
     status("Wi-Fi...", KNOWN[pick].ssid);
-    wifiMulti.addAP(KNOWN[pick].ssid, KNOWN[pick].pass);
+    wifiMulti->addAP(KNOWN[pick].ssid, KNOWN[pick].pass);
   } else {
     status("No known Wi-Fi", "searching...");
-    for (int k = 0; k < N_KNOWN; k++) wifiMulti.addAP(KNOWN[k].ssid, KNOWN[k].pass);
+    for (int k = 0; k < N_KNOWN; k++) wifiMulti->addAP(KNOWN[k].ssid, KNOWN[k].pass);
   }
-  wifiMulti.run(20000);
+  wifiMulti->run(20000);
   if (WiFi.status() == WL_CONNECTED) Serial.printf("wifi joined '%s'\n", WiFi.SSID().c_str());
   if (WiFi.status() != WL_CONNECTED) {
     Serial.printf("wifi FAILED status=%d (1=no SSID found, 4=connect failed/bad password, 6=disconnected)\n", WiFi.status());
@@ -663,8 +668,26 @@ void setup() {
 
 void loop() {
   if (String(WIFI_SSID) == "YOUR_WIFI_NAME") { delay(1000); return; }
-  if (WiFi.status() != WL_CONNECTED) {
-    wifiMulti.run(8000);  // retries every known network
+  // Connection lost: the ESP32 retries by itself for a while; if it is still down after 15 s,
+  // go back to the Wi-Fi chooser so you can pick a network again.
+  static unsigned long lostSince = 0;
+  if (WiFi.status() == WL_CONNECTED) {
+    lostSince = 0;
+  } else {
+    if (lostSince == 0) lostSince = millis();
+    if (millis() - lostSince > 15000) {
+      Serial.println("wifi lost -> chooser");
+      WiFi.disconnect(true);
+      delay(300);
+      connectWifi();
+      lostSince = 0;
+      if (WiFi.status() == WL_CONNECTED) {
+        if (serverStarted) { MDNS.end(); MDNS.begin("clockbuddy"); }
+        lastWeather = millis() - WEATHER_EVERY - 1;  // refresh data on the new network
+        lastMarket = millis() - MARKET_EVERY - 1;
+      }
+      setMode(mode);  // redraw the current screen
+    }
   }
   if (WiFi.status() == WL_CONNECTED && (millis() - lastWeather > WEATHER_EVERY || (!wx.ok && millis() - lastWeather > 30000))) {
     getWeather();
