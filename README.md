@@ -66,3 +66,7 @@ docs/board.md        pins, screen and touch notes, gotchas
 ```
 
 See [docs/board.md](docs/board.md) for hardware notes.
+
+## License
+
+[MIT](LICENSE)
