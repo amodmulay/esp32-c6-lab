@@ -34,6 +34,7 @@ Wi-Fi 6, USB-C). Each project is an Arduino sketch you can flash with one comman
 | --- | --- |
 | [hello-touch](projects/hello-touch) | Starter template and screen/touch smoke test |
 | [weather-clock](projects/weather-clock) | Clock + weather, companion face, Claude Code usage, Star Wars helmets |
+| [heart](projects/heart) | Beating heart at 65 bpm; touch and it fills the screen red, then returns (4 s) |
 
 ## Add a project
 

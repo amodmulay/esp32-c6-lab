@@ -1,0 +1,6 @@
+{
+  "description": "A beating heart at 65 bpm. Touch it and it swells to fill the screen red, then shrinks back (4 s).",
+  "libraries": [
+    "GFX Library for Arduino"
+  ]
+}
