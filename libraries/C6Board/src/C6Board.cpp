@@ -7,6 +7,52 @@ static Arduino_DataBus *bus = new Arduino_ESP32SPI(C6_PIN_DC, C6_PIN_CS, C6_PIN_
 Arduino_GFX *gfx = new Arduino_ST7789(bus, C6_PIN_RST, 4, false, C6_WIDTH, C6_HEIGHT, 34, 0, 34, 0);
 
 static bool touchReady = false;
+static uint8_t imuAddr = 0;
+
+static bool imuWrite(uint8_t reg, uint8_t val) {
+  Wire.beginTransmission(imuAddr);
+  Wire.write(reg);
+  Wire.write(val);
+  return Wire.endTransmission(true) == 0;
+}
+
+static bool imuRead(uint8_t reg, uint8_t *buf, int n) {
+  Wire.beginTransmission(imuAddr);
+  Wire.write(reg);
+  if (Wire.endTransmission(false) != 0) return false;
+  if (Wire.requestFrom((int)imuAddr, n) != n) return false;
+  for (int i = 0; i < n; i++) buf[i] = Wire.read();
+  return true;
+}
+
+// QMI8658: WHO_AM_I (0x00) = 0x05. CTRL1 0x02 (auto-increment), CTRL2 0x03 (accel: +-4 g, 250 Hz), CTRL7 0x08 (enable accel).
+static void imuBegin() {
+  const uint8_t addrs[2] = {0x6B, 0x6A};
+  for (uint8_t a : addrs) {
+    imuAddr = a;
+    uint8_t id = 0;
+    if (imuRead(0x00, &id, 1) && id == 0x05) {
+      imuWrite(0x02, 0x40);
+      imuWrite(0x03, 0x15);
+      imuWrite(0x08, 0x01);
+      delay(20);
+      return;
+    }
+  }
+  imuAddr = 0;
+}
+
+bool board_imu_ready() { return imuAddr != 0; }
+
+bool board_imu(float &ax, float &ay, float &az) {
+  if (!imuAddr) return false;
+  uint8_t b[6];
+  if (!imuRead(0x35, b, 6)) return false;
+  ax = (int16_t)(b[0] | (b[1] << 8)) / 8192.0f;
+  ay = (int16_t)(b[2] | (b[3] << 8)) / 8192.0f;
+  az = (int16_t)(b[4] | (b[5] << 8)) / 8192.0f;
+  return true;
+}
 
 void board_begin(bool withTouch) {
   pinMode(C6_PIN_BL, OUTPUT);
@@ -21,6 +67,7 @@ void board_begin(bool withTouch) {
     delay(60);
     Wire.begin(C6_PIN_TP_SDA, C6_PIN_TP_SCL, 100000);
     touchReady = true;
+    imuBegin();
   }
 }
 

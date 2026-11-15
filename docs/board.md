@@ -50,3 +50,11 @@ The wiki's Arduino example lists GPIO 38/39/45/47, which do not exist on an ESP3
 - Don't name a variable `detail`: it collides with a namespace in the C++ library headers.
 - After a failed Wi-Fi connect the IP is 0.0.0.0 and every request fails. The weather clock keeps going and
   retries from `loop()`, so the screen sits on "Loading weather" until Wi-Fi works. Check the serial monitor.
+
+## Accelerometer (QMI8658, I2C address 0x6B or 0x6A, shared bus with the touch panel)
+
+- WHO_AM_I register 0x00 reads 0x05. Enable with CTRL1=0x40, CTRL2=0x15 (+-4 g, 250 Hz), CTRL7=0x01, then read 6 bytes
+  from 0x35 (little-endian X, Y, Z; 8192 LSB per g). `board_imu()` in C6Board does this.
+- Axes measured on this board (screen facing you, USB end down): lying flat face up gives az = -1; standing upright gives
+  ay = -1; upside down gives ay = +1; tilting the left edge down makes ax positive.
+- The shake threshold in `weather-clock` is a first guess and may need tuning.

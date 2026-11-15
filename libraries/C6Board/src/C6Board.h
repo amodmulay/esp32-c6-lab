@@ -36,3 +36,8 @@ enum { BOARD_NONE = 0, BOARD_SWIPE = 1, BOARD_TAP = 2 };
 int board_gesture();
 // Where the finger lifted on the most recent gesture (raw touch coordinates, 0..171 x 0..319).
 void board_gesture_point(int &x, int &y);
+
+// QMI8658 accelerometer (shared I2C bus). Started by board_begin(true); returns false if not found.
+// Values are in g (about +-1 when still), in the sensor's own axes.
+bool board_imu_ready();
+bool board_imu(float &ax, float &ay, float &az);

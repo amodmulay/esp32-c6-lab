@@ -32,7 +32,7 @@ unsigned long lastWeather = 0;
 const unsigned long WEATHER_EVERY = 15UL * 60UL * 1000UL;
 
 // ---- text slots: only repaint a row when its text changed ----
-String cache[48];
+String cache[64];
 void row(int slot, int y, int h, const String &s, int size, uint16_t fg, int align = 1) {
   if (cache[slot] == s) return;
   cache[slot] = s;
@@ -341,6 +341,98 @@ void drawMarkets() {
   }
 }
 
+// ---- plane spotter: aircraft around you from the community ADS-B feed adsb.lol (no API key) ----
+struct Plane { char call[9]; char type[5]; int alt; int gs; float trk, dst, dir; };  // dst in nautical miles, dir = bearing from you
+Plane planes[8];
+int nPlanes = 0;
+bool planesOk = false;
+unsigned long lastPlanes = 0;
+bool planesFetched = false;
+const float PL_RADIUS = 25;  // nautical miles (~46 km)
+
+bool getPlanes() {
+  if (!haveLoc) return false;
+  JsonDocument filter;
+  JsonObject f = filter["ac"].add<JsonObject>();
+  f["flight"] = true; f["alt_baro"] = true; f["gs"] = true; f["track"] = true; f["dst"] = true; f["dir"] = true; f["t"] = true;
+  WiFiClientSecure client;
+  client.setInsecure();  // public aircraft data only
+  HTTPClient http;
+  http.useHTTP10(true);  // no chunked encoding, so the body can be parsed straight from the stream
+  http.begin(client, String("https://api.adsb.lol/v2/point/") + String(lat, 3) + "/" + String(lon, 3) + "/" + String((int)PL_RADIUS));
+  http.setTimeout(10000);
+  int code = http.GET();
+  Serial.printf("planes http=%d\n", code);
+  if (code != 200) { http.end(); return false; }
+  JsonDocument d;
+  DeserializationError e = deserializeJson(d, http.getStream(), DeserializationOption::Filter(filter));
+  http.end();
+  if (e) { Serial.println("planes parse fail"); return false; }
+  nPlanes = 0;
+  for (JsonObject a : d["ac"].as<JsonArray>()) {
+    if (a["dst"].isNull()) continue;
+    Plane p;
+    String fl = String((const char *)(a["flight"] | ""));
+    fl.trim();
+    String ty = String((const char *)(a["t"] | ""));
+    strlcpy(p.call, fl.length() ? fl.c_str() : "no-id", sizeof p.call);
+    strlcpy(p.type, ty.c_str(), sizeof p.type);
+    JsonVariant alt = a["alt_baro"];
+    p.alt = alt.is<int>() ? alt.as<int>() : 0;  // "ground" -> 0
+    p.gs = a["gs"] | 0;
+    p.trk = a["track"] | 0.0f;
+    p.dst = a["dst"] | 0.0f;
+    p.dir = a["dir"] | 0.0f;
+    int pos = nPlanes;  // keep the 8 nearest, sorted by distance
+    while (pos > 0 && planes[pos - 1].dst > p.dst) pos--;
+    if (pos >= 8) continue;
+    int last = nPlanes < 8 ? nPlanes : 7;
+    for (int i = last; i > pos; i--) planes[i] = planes[i - 1];
+    planes[pos] = p;
+    if (nPlanes < 8) nPlanes++;
+  }
+  planesOk = true;
+  return true;
+}
+
+void drawPlanes() {
+  row(48, 4, 20, "PLANES", 2, C_ACC);
+  String head = !planesOk ? (planesFetched ? "no data" : "looking up...")
+                          : (nPlanes ? String(nPlanes) + " nearby (" + String((int)(PL_RADIUS * 1.852f)) + " km)" : "none in range");
+  row(49, 26, 12, head, 1, C_DIM);
+  // radar: you at the centre, north up, outer ring = PL_RADIUS
+  const int cx = 86, cy = 108, R = 58;
+  gfx->fillRect(0, 40, W, 132, C_BG);
+  gfx->drawCircle(cx, cy, R, C_DIM);
+  gfx->drawCircle(cx, cy, R / 2, C_DIM);
+  gfx->drawFastHLine(cx - R, cy, 2 * R, C_DIM);
+  gfx->drawFastVLine(cx, cy - R, 2 * R, C_DIM);
+  gfx->setTextSize(1);
+  gfx->setTextColor(C_DIM, C_BG);
+  gfx->setCursor(cx - 3, 40);
+  gfx->print("N");
+  gfx->fillCircle(cx, cy, 2, C_TIME);
+  for (int i = 0; i < nPlanes; i++) {
+    float r = min(planes[i].dst / PL_RADIUS, 1.0f) * R;
+    float a = planes[i].dir * DEG_TO_RAD, h = planes[i].trk * DEG_TO_RAD;
+    int px = cx + (int)(r * sinf(a)), py = cy - (int)(r * cosf(a));
+    gfx->drawLine(px, py, px + (int)(10 * sinf(h)), py - (int)(10 * cosf(h)), C_TIME);
+    gfx->fillCircle(px, py, i == 0 ? 4 : 3, i == 0 ? C_TEMP : C_ACC);
+  }
+  for (int i = 0; i < 4; i++) {
+    int y = 176 + i * 35;
+    if (i < nPlanes) {
+      Plane &p = planes[i];
+      row(50 + i * 2, y, 18, String(p.call) + " " + p.type, 2, i == 0 ? C_TEMP : C_TIME);
+      String info = String(p.alt) + "ft  " + String(p.gs) + "kt  " + String((int)lroundf(p.dst * 1.852f)) + "km";
+      row(51 + i * 2, y + 18, 12, info, 1, C_DIM);
+    } else {
+      row(50 + i * 2, y, 18, "", 2, C_DIM);
+      row(51 + i * 2, y + 18, 12, "", 1, C_DIM);
+    }
+  }
+}
+
 // ---- temperature detail: tap the temperature to see temp, feels-like and forecast in big text ----
 bool showDetail = false;
 
@@ -447,26 +539,28 @@ void drawUsage() {
 }
 
 // ---- companion face ----
-enum Mode { M_INFO, M_MARKET, M_FACE, M_USAGE, M_HELMET };
-const int N_MODES = 5;
-const unsigned long ROTATE_EVERY = 5000;  // clock/weather <-> markets
-unsigned long lastRotate = 0;
-Mode mode = M_INFO;
+enum Mode { M_INFO, M_MARKET, M_FACE, M_USAGE, M_HELMET, M_PLANES };
+const int N_MODES = 6;
+// Auto-rotation: companion face 15-20 s, then weather 4 s, then markets 4 s, then back to the face.
+unsigned long rotateAt = 0;
+Mode mode = M_FACE;
 unsigned long nextBlink = 0, nextGlance = 0;
 int eyeDx = 0;  // horizontal glance offset
+int tiltDx = 0, tiltDy = 0;  // eye offset that follows how the board is tilted
 const int EYE_W = 44, EYE_H = 64, EYE_CY = 115;
 const int EYE_X[2] = {46, 126};
 
 void clearEye(int i) {
-  gfx->fillRect(EYE_X[i] - EYE_W / 2 - 14, EYE_CY - EYE_H / 2 - 4, EYE_W + 28, EYE_H + 8, C_BG);
+  gfx->fillRect(EYE_X[i] - EYE_W / 2 - 26, EYE_CY - EYE_H / 2 - 14, EYE_W + 52, EYE_H + 28, C_BG);
 }
 
 void drawEyes(int h) {
   uint16_t col = gfx->color565(80, 220, 255);
+  clearEye(0);
+  clearEye(1);  // clear both first: the clear areas overlap in the middle
   for (int i = 0; i < 2; i++) {
-    clearEye(i);
-    int x = EYE_X[i] - EYE_W / 2 + eyeDx;
-    gfx->fillRoundRect(x, EYE_CY - h / 2, EYE_W, h, min(14, h / 2), col);
+    int x = EYE_X[i] - EYE_W / 2 + eyeDx + tiltDx;
+    gfx->fillRoundRect(x, EYE_CY + tiltDy - h / 2, EYE_W, h, min(14, h / 2), col);
   }
 }
 
@@ -597,8 +691,9 @@ void drawHelmet(int k) {
 void setMode(int m) {  // int, not Mode: Arduino's auto-prototypes are emitted before the enum
   mode = (Mode)m;
   eyeDx = 0;
+  tiltDx = tiltDy = 0;
   showDetail = false;
-  lastRotate = millis();
+  rotateAt = millis() + (m == M_FACE ? random(15000, 20001) : 4000);
   if (m == M_INFO) {
     drawStatic();
   } else if (m == M_FACE) {
@@ -609,6 +704,12 @@ void setMode(int m) {  // int, not Mode: Arduino's auto-prototypes are emitted b
     nextGlance = millis() + random(3000, 8000);
   } else if (m == M_HELMET) {
     drawHelmet(pickHelmet());
+  } else if (m == M_PLANES) {
+    gfx->fillScreen(C_BG);
+    for (auto &s : cache) s = "";
+    planesFetched = false;
+    lastPlanes = 0;
+    drawPlanes();
   } else {
     gfx->fillScreen(C_BG);
     for (auto &s : cache) s = "";
@@ -620,9 +721,79 @@ void blink() {
   for (int h : seq) { drawEyes(h); delay(22); }
 }
 
+// ---- tilt awareness (accelerometer: ax>0 = left edge down, ay<0 = standing upright, az<0 = lying face up) ----
+bool asleep = false;
+unsigned long upsideSince = 0, shakeCool = 0, lastImu = 0;
+float shakeScore = 0, pAx = 0, pAy = 0, pAz = 0;
+
+void drawSleep() {
+  uint16_t col = gfx->color565(80, 220, 255);
+  clearEye(0);
+  clearEye(1);
+  for (int i = 0; i < 2; i++)
+    for (int o = -2; o <= 2; o++) gfx->drawFastHLine(EYE_X[i] - 20, EYE_CY + o, 40, col);
+  gfx->setTextSize(3);
+  gfx->setTextColor(C_DIM, C_BG);
+  gfx->setCursor(128, 40);
+  gfx->print("z");
+  gfx->setCursor(144, 22);
+  gfx->print("Z");
+}
+
+void dizzy() {  // eyes wobble in opposite directions for about 1.6 s
+  uint16_t col = gfx->color565(80, 220, 255);
+  unsigned long t0 = millis();
+  while (millis() - t0 < 1600) {
+    float ph = (millis() - t0) * 0.02f;
+    clearEye(0);
+    clearEye(1);
+    for (int i = 0; i < 2; i++) {
+      float sgn = i ? -1.0f : 1.0f;
+      int dx = (int)(8 * cosf(ph * sgn)), dy = (int)(12 * sinf(ph * sgn));
+      gfx->fillRoundRect(EYE_X[i] - EYE_W / 2 + dx, EYE_CY - 22 + dy, EYE_W, 44, 14, col);
+    }
+    delay(40);
+  }
+  drawEyes(EYE_H);
+}
+
+void tiltTick(unsigned long now) {
+  if (now - lastImu < 60) return;
+  lastImu = now;
+  float x, y, z;
+  if (!board_imu(x, y, z)) return;
+  float d = fabsf(x - pAx) + fabsf(y - pAy) + fabsf(z - pAz);
+  pAx = x; pAy = y; pAz = z;
+  shakeScore = shakeScore * 0.6f + d;
+  // upside down (standing, top edge toward the floor) for a moment: fall asleep; wake when upright again
+  if (y > 0.6f) { if (!upsideSince) upsideSince = now; } else upsideSince = 0;
+  if (!asleep && upsideSince && now - upsideSince > 700) { asleep = true; drawSleep(); return; }
+  if (asleep) {
+    if (y < 0.3f) { asleep = false; shakeScore = 0; drawEyes(EYE_H); }
+    return;
+  }
+  if (shakeScore > 3.0f && now > shakeCool) {
+    Serial.printf("shake score=%.1f\n", shakeScore);
+    dizzy();
+    shakeCool = millis() + 4000;
+    shakeScore = 0;
+    return;
+  }
+  // eyes look toward the low side: left edge down -> look left; lying face up -> look up at you
+  int tx = fabsf(x) < 0.06f ? 0 : constrain((int)(-x * 20), -13, 13);
+  int ty = constrain((int)((z + 0.1f) * 9), -8, 8);
+  if (abs(tx - tiltDx) >= 2 || abs(ty - tiltDy) >= 2) {
+    tiltDx += (tx - tiltDx + (tx > tiltDx ? 1 : -1)) / 2;
+    tiltDy += (ty - tiltDy + (ty > tiltDy ? 1 : -1)) / 2;
+    drawEyes(EYE_H);
+  }
+}
+
 void faceTick() {
   unsigned long now = millis();
-  if (now >= nextGlance) {  // look left or right for a moment, then back
+  tiltTick(now);
+  if (asleep) return;
+  if (now >= nextGlance && abs(tiltDx) < 4) {  // look left or right for a moment, then back
     eyeDx = random(2) ? 9 : -9;
     drawEyes(EYE_H);
     delay(random(500, 900));
@@ -631,6 +802,7 @@ void faceTick() {
     nextGlance = millis() + random(4000, 9000);
     return;
   }
+  if (now >= nextGlance) nextGlance = now + 3000;  // tilted: skip the glance
   if (now < nextBlink) return;
   blink();
   if (random(100) < 20) { delay(90); blink(); }  // occasional double blink
@@ -662,8 +834,8 @@ void setup() {
   getMarkets();
   marketTried = true;
   lastMarket = millis();
-  drawStatic();
   lastWeather = millis();
+  setMode(M_FACE);  // start with the companion
 }
 
 void loop() {
@@ -709,10 +881,10 @@ void loop() {
     server.handleClient();
   }
   int g = board_gesture();
-  if (g) lastRotate = millis();  // any touch restarts the 5 s timer
-  // auto-rotate between clock/weather and markets (not while the detail view is open or on other screens)
-  if ((mode == M_INFO || mode == M_MARKET) && !showDetail && millis() - lastRotate > ROTATE_EVERY) {
-    setMode(mode == M_INFO ? M_MARKET : M_INFO);
+  if (g) rotateAt = millis() + (mode == M_FACE ? random(15000, 20001) : 4000);  // any touch restarts the timer
+  // auto-rotate: face 15-20 s -> weather 4 s -> markets 4 s -> face (not on the detail view, other screens, or while asleep)
+  if ((mode == M_FACE || mode == M_INFO || mode == M_MARKET) && !showDetail && !asleep && millis() > rotateAt) {
+    setMode(mode == M_FACE ? M_INFO : (mode == M_INFO ? M_MARKET : M_FACE));
     lastDraw = 0;
   }
   if (g == 1) { setMode((mode + 1) % N_MODES); lastDraw = 0; }
@@ -728,6 +900,13 @@ void loop() {
   }
   if (mode == M_FACE) {
     faceTick();
+  } else if (mode == M_PLANES) {
+    if (WiFi.status() == WL_CONNECTED && (lastPlanes == 0 || millis() - lastPlanes > 15000)) {
+      getPlanes();
+      planesFetched = true;
+      lastPlanes = millis();
+      drawPlanes();
+    }
   } else if (mode == M_MARKET && millis() - lastDraw > 500) {
     lastDraw = millis();
     drawMarkets();
