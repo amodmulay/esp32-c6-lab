@@ -693,11 +693,9 @@ void drawUsage() {
 }
 
 // ---- companion face ----
-enum Mode { M_INFO, M_MARKET, M_FACE, M_USAGE, M_HELMET, M_PLANES };
-const int N_MODES = 6;
-// Auto-rotation: companion face 15-20 s, then weather 4 s, then markets 4 s, then back to the face.
-unsigned long rotateAt = 0;
-Mode mode = M_FACE;
+enum Mode { M_MENU, M_INFO, M_MARKET, M_FACE, M_USAGE, M_PLANES };
+Mode mode = M_MENU;  // the landing screen: tiles to pick a feature; a swipe in any feature returns here
+bool asleep = false;  // companion asleep (board upside down)
 unsigned long nextBlink = 0, nextGlance = 0;
 int eyeDx = 0;  // horizontal glance offset
 int tiltDx = 0, tiltDy = 0;  // eye offset that follows how the board is tilted
@@ -772,74 +770,96 @@ void drawMouth() {
   }
 }
 
-// ---- Star Wars helmets (simple fan-art shapes drawn with primitives) ----
-int lastHelmet = -1;
-int pickHelmet() {
-  int k;
-  do { k = random(4); } while (k == lastHelmet);
-  lastHelmet = k;
-  return k;
+// ---- landing screen: tiles to choose a feature ----
+const int N_TILES = 5;
+const int TILE_MODE[N_TILES] = {M_INFO, M_MARKET, M_FACE, M_PLANES, M_USAGE};
+const char *TILE_NAME[N_TILES] = {"Clock", "Stocks", "Buddy", "Planes", "Usage"};
+const int TILE_W = 76, TILE_H = 88;
+
+int tileX(int i) { return 8 + (i % 2) * 84; }
+int tileY(int i) { return 34 + (i / 2) * 94; }
+
+void drawTileIcon(int i, int cx, int cy, bool on) {
+  uint16_t bg = on ? gfx->color565(255, 255, 255) : gfx->color565(22, 28, 40);
+  if (i == 0) {  // sun and cloud
+    uint16_t sun = gfx->color565(255, 200, 60), cl = gfx->color565(200, 215, 235);
+    gfx->fillCircle(cx - 8, cy - 8, 9, sun);
+    for (int k = 0; k < 8; k++) {
+      float a = k * 0.7854f;
+      gfx->drawLine(cx - 8 + (int)(12 * cosf(a)), cy - 8 + (int)(12 * sinf(a)), cx - 8 + (int)(16 * cosf(a)), cy - 8 + (int)(16 * sinf(a)), sun);
+    }
+    gfx->fillCircle(cx + 2, cy + 6, 8, cl);
+    gfx->fillCircle(cx + 12, cy + 8, 6, cl);
+    gfx->fillRoundRect(cx - 6, cy + 6, 24, 9, 4, cl);
+  } else if (i == 1) {  // rising chart
+    uint16_t up = gfx->color565(70, 220, 120);
+    int px[5] = {-18, -9, -1, 9, 18}, py[5] = {12, 3, 8, -5, -13};
+    for (int k = 0; k < 4; k++)
+      for (int o = -1; o <= 1; o++) gfx->drawLine(cx + px[k], cy + py[k] + o, cx + px[k + 1], cy + py[k + 1] + o, up);
+    gfx->fillTriangle(cx + 20, cy - 17, cx + 10, cy - 15, cx + 19, cy - 6, up);
+    gfx->drawFastHLine(cx - 20, cy + 17, 40, gfx->color565(90, 100, 120));
+  } else if (i == 2) {  // companion face
+    uint16_t c = gfx->color565(80, 220, 255);
+    gfx->fillRoundRect(cx - 17, cy - 15, 10, 20, 4, c);
+    gfx->fillRoundRect(cx + 7, cy - 15, 10, 20, 4, c);
+    for (int x = -12; x <= 12; x++) {
+      float t = x / 12.0f;
+      gfx->fillCircle(cx + x, cy + 12 + (int)(5 * (1 - t * t)), 1, c);
+    }
+  } else if (i == 3) {  // aircraft
+    uint16_t p = gfx->color565(255, 190, 60);
+    gfx->fillTriangle(cx, cy - 20, cx - 20, cy + 12, cx + 20, cy + 12, p);
+    gfx->fillTriangle(cx, cy + 4, cx - 7, cy + 16, cx + 7, cy + 16, bg);
+    gfx->fillRect(cx - 2, cy - 12, 4, 26, p);
+  } else {  // usage bars
+    uint16_t o = gfx->color565(255, 140, 70), d = gfx->color565(60, 70, 90);
+    int len[3] = {34, 22, 12};
+    for (int k = 0; k < 3; k++) {
+      gfx->fillRoundRect(cx - 20, cy - 16 + k * 14, 40, 8, 3, d);
+      gfx->fillRoundRect(cx - 20, cy - 16 + k * 14, len[k], 8, 3, o);
+    }
+  }
 }
 
-void drawHelmet(int k) {
+void drawTile(int i, bool on) {
+  int x = tileX(i), y = tileY(i);
+  uint16_t bg = on ? gfx->color565(255, 255, 255) : gfx->color565(22, 28, 40);
+  gfx->fillRoundRect(x, y, TILE_W, TILE_H, 10, bg);
+  gfx->drawRoundRect(x, y, TILE_W, TILE_H, 10, on ? gfx->color565(255, 255, 255) : gfx->color565(60, 72, 96));
+  drawTileIcon(i, x + TILE_W / 2, y + 34, on);
+  gfx->setTextSize(2);
+  gfx->setTextColor(on ? C_BG : C_TIME, bg);
+  int tw = strlen(TILE_NAME[i]) * 12;
+  gfx->setCursor(x + (TILE_W - tw) / 2, y + 64);
+  gfx->print(TILE_NAME[i]);
+}
+
+void drawMenu() {
   gfx->fillScreen(C_BG);
-  for (auto &s : cache) s = "";
-  const uint16_t W = gfx->color565(235, 235, 240), K = gfx->color565(0, 0, 0);
-  const uint16_t GR = gfx->color565(150, 150, 160);
-  const char *name = "";
-  if (k == 0) {  // Stormtrooper
-    name = "STORMTROOPER";
-    gfx->fillRoundRect(38, 40, 96, 150, 44, W);
-    gfx->fillRoundRect(52, 160, 68, 50, 14, W);
-    gfx->fillRect(44, 98, 84, 3, GR);
-    gfx->fillRoundRect(52, 108, 30, 24, 10, K);
-    gfx->fillRoundRect(90, 108, 30, 24, 10, K);
-    gfx->fillTriangle(86, 138, 79, 158, 93, 158, GR);
-    gfx->fillRect(66, 136, 3, 16, K);
-    gfx->fillRect(103, 136, 3, 16, K);
-    gfx->fillRoundRect(64, 174, 44, 18, 3, K);
-    for (int i = 0; i < 5; i++) gfx->drawFastVLine(70 + i * 8, 177, 12, W);
-  } else if (k == 1) {  // Darth Vader
-    name = "DARTH VADER";
-    const uint16_t D = gfx->color565(60, 62, 72), R = gfx->color565(150, 150, 165);
-    gfx->fillCircle(86, 98, 54, D);
-    gfx->drawCircle(86, 98, 54, R);
-    gfx->fillRoundRect(26, 120, 120, 14, 6, gfx->color565(85, 87, 98));
-    gfx->fillRoundRect(48, 130, 76, 86, 18, D);
-    gfx->fillTriangle(48, 200, 124, 200, 86, 238, D);
-    gfx->fillRoundRect(54, 140, 26, 14, 6, K);
-    gfx->fillRoundRect(92, 140, 26, 14, 6, K);
-    gfx->drawRoundRect(54, 140, 26, 14, 6, R);
-    gfx->drawRoundRect(92, 140, 26, 14, 6, R);
-    gfx->fillTriangle(86, 160, 78, 178, 94, 178, K);
-    gfx->fillRoundRect(62, 188, 48, 24, 4, gfx->color565(25, 25, 30));
-    gfx->drawRoundRect(62, 188, 48, 24, 4, R);
-    for (int i = 0; i < 5; i++) gfx->drawFastVLine(69 + i * 8, 192, 16, R);
-  } else if (k == 2) {  // Boba Fett
-    name = "BOBA FETT";
-    const uint16_t G = gfx->color565(95, 125, 100), RD = gfx->color565(200, 55, 45);
-    gfx->drawLine(136, 112, 152, 56, GR);
-    gfx->drawLine(137, 112, 153, 56, GR);
-    gfx->fillCircle(153, 54, 4, RD);
-    gfx->fillRoundRect(40, 40, 92, 176, 38, G);
-    gfx->fillRoundRect(48, 56, 76, 10, 4, RD);
-    gfx->fillRoundRect(46, 100, 80, 20, 8, K);
-    gfx->fillRoundRect(78, 114, 16, 64, 4, K);
-    gfx->fillRect(44, 184, 84, 4, RD);
-    for (int i = 0; i < 4; i++) gfx->drawFastHLine(58, 194 + i * 5, 56, K);
-  } else {  // Clone trooper
-    name = "CLONE TROOPER";
-    const uint16_t B = gfx->color565(40, 110, 230);
-    gfx->fillRoundRect(38, 40, 96, 170, 44, W);
-    gfx->fillRect(80, 44, 12, 52, B);
-    gfx->fillRoundRect(46, 106, 80, 24, 10, K);
-    gfx->fillRoundRect(78, 124, 16, 44, 6, K);
-    gfx->fillRect(44, 150, 10, 30, B);
-    gfx->fillRect(118, 150, 10, 30, B);
-    gfx->fillRoundRect(66, 180, 40, 14, 3, K);
-    for (int i = 0; i < 4; i++) gfx->drawFastVLine(72 + i * 9, 183, 8, W);
+  for (auto &c : cache) c = "";
+  gfx->setTextSize(2);
+  gfx->setTextColor(C_ACC, C_BG);
+  gfx->setCursor(8, 10);
+  gfx->print("Pick one");
+  for (int i = 0; i < N_TILES; i++) drawTile(i, false);
+  gfx->setTextSize(1);
+  gfx->setTextColor(C_DIM, C_BG);
+  gfx->setCursor(100, 246);
+  gfx->print("swipe in");
+  gfx->setCursor(100, 258);
+  gfx->print("any screen");
+  gfx->setCursor(100, 270);
+  gfx->print("= back here");
+}
+
+int menuHit(int x, int y) {  // nearest tile to the touch, if reasonably close
+  int best = -1, bestD = 60 * 60;
+  for (int i = 0; i < N_TILES; i++) {
+    int dx = x - (tileX(i) + TILE_W / 2), dy = y - (tileY(i) + TILE_H / 2);
+    int d = dx * dx + dy * dy;
+    if (d < bestD) { bestD = d; best = i; }
   }
-  row(17, 270, 22, name, 2, C_ACC);
+  return best;
 }
 
 void setMode(int m) {  // int, not Mode: Arduino's auto-prototypes are emitted before the enum
@@ -847,8 +867,10 @@ void setMode(int m) {  // int, not Mode: Arduino's auto-prototypes are emitted b
   eyeDx = 0;
   tiltDx = tiltDy = 0;
   showDetail = false;
-  rotateAt = millis() + (m == M_FACE ? random(15000, 20001) : 4000);
-  if (m == M_INFO) {
+  asleep = false;
+  if (m == M_MENU) {
+    drawMenu();
+  } else if (m == M_INFO) {
     drawStatic();
   } else if (m == M_FACE) {
     gfx->fillScreen(C_BG);
@@ -856,8 +878,6 @@ void setMode(int m) {  // int, not Mode: Arduino's auto-prototypes are emitted b
     drawMouth();
     nextBlink = millis() + random(2000, 6000);
     nextGlance = millis() + random(3000, 8000);
-  } else if (m == M_HELMET) {
-    drawHelmet(pickHelmet());
   } else if (m == M_PLANES) {
     gfx->fillScreen(C_BG);
     for (auto &s : cache) s = "";
@@ -878,7 +898,6 @@ void blink() {
 }
 
 // ---- tilt awareness (accelerometer: ax>0 = left edge down, ay<0 = standing upright, az<0 = lying face up) ----
-bool asleep = false;
 unsigned long upsideSince = 0, shakeCool = 0, lastImu = 0;
 float shakeScore = 0, pAx = 0, pAy = 0, pAz = 0;
 
@@ -991,7 +1010,7 @@ void setup() {
   marketTried = true;
   lastMarket = millis();
   lastWeather = millis();
-  setMode(M_FACE);  // start with the companion
+  setMode(M_MENU);  // landing screen
 }
 
 void loop() {
@@ -1037,21 +1056,25 @@ void loop() {
     server.handleClient();
   }
   int g = board_gesture();
-  if (g) rotateAt = millis() + (mode == M_FACE ? random(15000, 20001) : 4000);  // any touch restarts the timer
-  // auto-rotate: face 15-20 s -> weather 4 s -> markets 4 s -> face (not on the detail view, other screens, or while asleep)
-  if ((mode == M_FACE || mode == M_INFO || mode == M_MARKET) && !showDetail && !asleep && millis() > rotateAt) {
-    setMode(mode == M_FACE ? M_INFO : (mode == M_INFO ? M_MARKET : M_FACE));
-    lastDraw = 0;
+  if (g == 1) {  // swipe: back to the landing screen from any feature
+    if (mode != M_MENU) { setMode(M_MENU); lastDraw = 0; }
+  } else if (g == 2 && mode == M_MENU) {
+    int tx, ty;
+    board_gesture_point(tx, ty);
+    int t = menuHit(tx, ty);
+    if (t >= 0) {
+      drawTile(t, true);  // quick press feedback
+      delay(120);
+      setMode(TILE_MODE[t]);
+      lastDraw = 0;
+    }
   }
-  if (g == 1) { setMode((mode + 1) % N_MODES); lastDraw = 0; }
   else if (g == 2 && mode == M_FACE) react();
-  else if (g == 2 && mode == M_HELMET) drawHelmet(pickHelmet());
   else if (g == 2 && mode == M_PLANES && nPlanes) { planesView ^= 1; viewAt = millis() + VIEW_EVERY; showPlanesView(); }
   else if (g == 2 && mode == M_INFO) {
     int tx, ty;
     board_gesture_point(tx, ty);
-    // Temperature sits around y=156..200 on screen; the band is generous (120..205) because the
-    // touch panel's vertical orientation relative to the screen is not verified.
+    // Temperature sits around y=156..200 on screen; the band is a bit generous (120..205) to forgive imprecise taps.
     if (showDetail) { setDetail(false); drawStatic(); lastDraw = 0; }
     else if (wx.ok && ty >= 120 && ty <= 205) { setDetail(true); lastDraw = 0; }
   }

@@ -1,4 +1,4 @@
 {
-  "description": "Clock + weather, swipe-through companion face, Claude Code usage, and Star Wars helmets",
+  "description": "Tile launcher: clock + weather, stocks, tilt-aware companion, plane spotter, Claude Code usage",
   "libraries": ["GFX Library for Arduino", "ArduinoJson"]
 }

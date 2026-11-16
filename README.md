@@ -33,7 +33,7 @@ Wi-Fi 6, USB-C). Each project is an Arduino sketch you can flash with one comman
 | Project | What it is |
 | --- | --- |
 | [hello-touch](projects/hello-touch) | Starter template and screen/touch smoke test |
-| [weather-clock](projects/weather-clock) | Companion that rotates with weather and markets, tilt-aware face, plane spotter, Claude Code usage, Star Wars helmets |
+| [weather-clock](projects/weather-clock) | Tile launcher: clock + weather, stocks, tilt-aware companion, plane spotter, Claude Code usage |
 | [heart](projects/heart) | Beating heart at 65 bpm; touch and it fills the screen red, then returns (4 s) |
 
 ## Add a project

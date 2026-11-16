@@ -86,6 +86,8 @@ bool board_touch(int &x, int &y) {
   if (b[1] == 0) return false;
   x = ((b[2] & 0x0F) << 8) | b[3];
   y = ((b[4] & 0x0F) << 8) | b[5];
+  x = (C6_WIDTH - 1) - x;  // measured: raw touch X runs right-to-left compared with the screen; Y matches
+  if (x < 0) x = 0;
   return true;
 }
 

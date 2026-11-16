@@ -31,8 +31,9 @@ The wiki's Arduino example lists GPIO 38/39/45/47, which do not exist on an ESP3
 - Read 14 bytes from register `0x01`: byte 1 is the touch count; `x = ((b2 & 0xF) << 8) | b3`,
   `y = ((b4 & 0xF) << 8) | b5`.
 - INT only pulses briefly while a finger moves, so don't wait on it; polling every ~15 ms works fine.
-- Not verified: whether touch Y runs top-to-bottom or the reverse relative to the screen.
-  The weather clock's tap target is therefore a deliberately wide band.
+- Orientation (measured with four corner taps): raw X runs right-to-left compared with the screen, raw Y matches.
+  `board_touch()` in C6Board flips X, so its coordinates match the screen (0,0 = top-left, 171x319 = bottom-right).
+  Taps land within roughly 15 px of the target, so use big targets.
 
 ## Build settings
 

@@ -1,22 +1,20 @@
 # weather-clock
 
-Clock and weather for the ESP32-C6-Touch-LCD-1.47, plus a few fun screens. The board starts on the companion and
-**rotates by itself**: companion face for 15-20 seconds, then weather for 4 seconds, then markets for 4 seconds, then
-back to the companion. **Swipe** to cycle by hand through all screens (swiping or tapping restarts the timer; the
-rotation only runs between those three, not on the other screens):
+Clock and weather for the ESP32-C6-Touch-LCD-1.47, plus a few fun screens. The board starts on a **landing screen with
+tiles**: tap a tile to open that feature, and it is the only thing shown. **Swipe** on any feature to come back to the tiles.
 
-1. **Clock + weather**: time (NTP), date, city, temperature, conditions, 3-day forecast.
-   **Tap the temperature** for a full-screen view of the temperature, feels-like and forecast in large text; tap again to go back.
-   (The detail view pauses the rotation.)
-2. **Markets**: S&P 500, DAX, NASDAQ with change vs. previous close. Green = up, red = down, blue = exchange closed.
-3. **Companion face**: two eyes and a smile that blink at random, glance around, and react when tapped (wink, hearts, happy eyes).
-   It is **tilt-aware** (accelerometer): the eyes look toward the low side when you tilt the board and look up at you when it
-   lies flat, it gets **dizzy when shaken**, and **falls asleep (closed eyes, Zzz) when stood upside down**.
-4. **Claude Code usage**: 5-hour and weekly limits as bars with reset countdowns, plus session context use.
-5. **Star Wars helmets**: a random Stormtrooper, Darth Vader, Boba Fett or Clone Trooper drawn from simple shapes. Tap for another.
-6. **Plane spotter**: a radar of the aircraft within ~46 km of your location (north up, with each plane's heading) and a list of the
-   4 nearest with callsign, type, altitude (ft), speed (kt) and distance. Data comes from the community ADS-B feed
-   [adsb.lol](https://adsb.lol) (no key); it refreshes every 15 seconds while the screen is showing. **Every 10 seconds it flips to a detail view of the closest aircraft** (airline from the callsign prefix, aircraft type, altitude, speed, heading, distance, and a dot-matrix picture rotated to its heading); tap to flip by hand. The radar fills the screen.
+- **Clock**: time (NTP), date, city, temperature, conditions, 3-day forecast.
+  **Tap the temperature** for a full-screen view of the temperature, feels-like and forecast in large text; tap again to go back.
+- **Stocks**: S&P 500, DAX, NASDAQ with change vs. previous close. Green = up, red = down, blue = exchange closed.
+- **Buddy** (companion face): two eyes and a smile that blink at random, glance around, and react when tapped (wink, hearts,
+  happy eyes). It is **tilt-aware** (accelerometer): the eyes look toward the low side when you tilt the board and look up at
+  you when it lies flat, it gets **dizzy when shaken**, and **falls asleep (closed eyes, Zzz) when stood upside down**.
+- **Planes**: a full-screen radar of the aircraft within ~46 km of your location (north up, with each plane's heading) and the
+  two nearest listed below. Data comes from the community ADS-B feed [adsb.lol](https://adsb.lol) (no key) and refreshes every
+  15 seconds while the screen is showing. **Every 10 seconds it flips to a detail view of the closest aircraft** (airline from
+  the callsign prefix, aircraft type, altitude, speed, heading, distance, and a dot-matrix picture rotated to its heading);
+  tap to flip by hand.
+- **Usage**: Claude Code 5-hour and weekly limits as bars with reset countdowns, plus session context use.
 
 Location comes from your IP address (or fixed values in `secrets.h`); weather comes from [Open-Meteo](https://open-meteo.com) (no API key).
 
